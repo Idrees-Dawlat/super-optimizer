@@ -1,0 +1,20 @@
+﻿# WordPress & OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE & Editors
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Build artifacts & Dependencies
+node_modules/
+vendor/
+composer.lock
+package-lock.json
+
+# Local backups and temporary testing uploads
+backups/
+*.log
