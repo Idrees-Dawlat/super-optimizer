@@ -109,19 +109,31 @@ class ImagickEngine implements EngineInterface
 
             // Stripping bloated metadata while preserving essential ICC profiles
             if ($strip_metadata) {
-                $icc_profile = $image->getImageProfile('icc');
-                $image->stripImage();
-                if (!empty($icc_profile)) {
-                    $image->profileImage('icc', $icc_profile);
+                try {
+                    $profiles = $image->getImageProfiles('icc', true);
+                    $image->stripImage();
+                    if (!empty($profiles['icc'])) {
+                        $image->profileImage('icc', $profiles['icc']);
+                    }
+                } catch (\Throwable $profile_e) {
+                    $image->stripImage();
                 }
             }
 
-            // Format-specific tuning
+            // Format-specific tuning for maximum lossy compression
             $format = strtoupper($image->getImageFormat());
             if ($format === 'JPEG' || $format === 'JPG') {
                 $image->setImageCompression(\Imagick::COMPRESSION_JPEG);
                 $image->setImageCompressionQuality($quality);
-                $image->setInterlaceScheme(\Imagick::INTERLACE_PLANE); // Progressive JPEG
+                // 4:2:0 chroma subsampling: cuts JPEG payload by 30-50% with zero noticeable visual loss
+                $image->setSamplingFactors(['2x2', '1x1', '1x1']);
+                
+                // Interlace scheme: progressive for images > 15KB, baseline for small icons/thumbnails
+                if ($image->getImageLength() > 15360) {
+                    $image->setInterlaceScheme(\Imagick::INTERLACE_PLANE);
+                } else {
+                    $image->setInterlaceScheme(\Imagick::INTERLACE_NO);
+                }
             } elseif ($format === 'PNG') {
                 // Optimal PNG compression: deflate level 9, adaptive filtering
                 $image->setOption('png:compression-level', '9');
@@ -129,7 +141,7 @@ class ImagickEngine implements EngineInterface
                 $image->setOption('png:compression-strategy', '1');
             } elseif ($format === 'WEBP') {
                 $image->setImageCompressionQuality($quality);
-                $image->setOption('webp:method', '6'); // Max compression quality effort
+                $image->setOption('webp:method', '6');
             }
 
             $success = $image->writeImage($target_path);

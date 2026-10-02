@@ -1,7 +1,9 @@
 /**
- * Super Optimizer - Bulk Queue Runner
+ * Super Optimizer - Bulk Queue Runner & Real-Time Telemetry
  *
- * Browser-managed atomic batch queue runner with live telemetry.
+ * Single-loop asynchronous queue runner updating integrated telemetry.
+ *
+ * @package SuperOptimizer\Admin
  */
 
 (function ($) {
@@ -32,17 +34,17 @@
     const $progressPct    = $('#bulk-progress-pct');
     const $progressStatus = $('#bulk-progress-status');
     const $progressCounts = $('#bulk-progress-counts');
-    const $statusPill     = $('#bulk-status-pill');
     const $activeItemBox  = $('#so-active-item');
     const $activeFilename = $('#so-current-filename');
     const $activeSavings  = $('#so-current-savings');
     const $consoleStream  = $('#so-console-stream');
 
-    // Stat card DOM elements
-    const $statOptimizedCount = $('#stat-optimized-count');
-    const $statSubsizesDesc   = $('#stat-subsizes-desc');
+    // Telemetry DOM elements
+    const $statTimeSaved      = $('#stat-time-saved');
     const $statBytesSaved     = $('#stat-bytes-saved');
     const $statPercentage     = $('#stat-percentage');
+    const $statOptimizedCount = $('#stat-optimized-count');
+    const $statSubsizesDesc   = $('#stat-subsizes-desc');
     const $statNextgenCount   = $('#stat-nextgen-count');
 
     function formatBytes(bytes) {
@@ -55,21 +57,16 @@
 
     function getTimeStamp() {
         const d = new Date();
-        return '[' + d.toTimeString().split(' ')[0] + ']';
+        return d.toTimeString().split(' ')[0];
     }
 
-    function appendLog(message, type) {
+    function appendFeed(message, type) {
         type = type || 'info';
-        const $line = $('<div class="so-console-line so-line-' + type + '"></div>');
-        $line.append('<span class="so-line-time">' + getTimeStamp() + '</span>');
-        $line.append('<span class="so-line-msg">' + message + '</span>');
+        const $line = $('<div class="so-feed-item so-' + type + '"></div>');
+        $line.append('<span class="so-feed-time">' + getTimeStamp() + '</span>');
+        $line.append('<span class="so-feed-text">' + message + '</span>');
         $consoleStream.append($line);
         $consoleStream.scrollTop($consoleStream[0].scrollHeight);
-    }
-
-    function updatePill(statusText, statusCode) {
-        $statusPill.attr('data-status', statusCode);
-        $statusPill.find('.so-pill-text').text(statusText);
     }
 
     function updateProgressUI() {
@@ -82,13 +79,27 @@
         $progressCounts.text(processed + ' / ' + total + ' images');
     }
 
-    function updateStatCards(stats) {
+    function updateTelemetry(stats) {
         if (!stats) return;
-        if ($statOptimizedCount.length) $statOptimizedCount.text(Number(stats.optimized_attachments).toLocaleString());
-        if ($statSubsizesDesc.length) $statSubsizesDesc.text(Number(stats.optimized_subsizes).toLocaleString() + ' thumbnails optimized');
-        if ($statBytesSaved.length) $statBytesSaved.text(formatBytes(stats.total_bytes_saved));
-        if ($statPercentage.length) $statPercentage.text(stats.percentage_saved);
-        if ($statNextgenCount.length) $statNextgenCount.text(Number(stats.webp_count + stats.avif_count).toLocaleString());
+
+        if ($statTimeSaved.length && stats.time_saved_formatted) {
+            $statTimeSaved.text(stats.time_saved_formatted);
+        }
+        if ($statBytesSaved.length) {
+            $statBytesSaved.text(formatBytes(stats.total_bytes_saved));
+        }
+        if ($statPercentage.length) {
+            $statPercentage.text(stats.percentage_saved);
+        }
+        if ($statOptimizedCount.length) {
+            $statOptimizedCount.text(Number(stats.optimized_attachments).toLocaleString());
+        }
+        if ($statSubsizesDesc.length) {
+            $statSubsizesDesc.text(Number(stats.optimized_subsizes).toLocaleString() + ' thumbnails converted');
+        }
+        if ($statNextgenCount.length) {
+            $statNextgenCount.text(Number(stats.webp_count + stats.avif_count).toLocaleString());
+        }
     }
 
     function startBulkProcess() {
@@ -100,11 +111,9 @@
         $btnStart.hide();
         $btnPause.show();
         $btnResume.hide();
-        updatePill('Running', 'running');
         $progressStatus.text(config.i18n.optimizing);
-        appendLog('Scanning WordPress media library for unoptimized assets...', 'info');
+        appendFeed('Scanning media attachments for pending optimizations...', 'info');
 
-        // Fetch queue
         $.ajax({
             url: config.ajaxUrl,
             type: 'POST',
@@ -115,7 +124,7 @@
             },
             success: function (res) {
                 if (!res.success || !res.data) {
-                    appendLog('Failed to retrieve media library queue.', 'error');
+                    appendFeed('Failed to query attachment queue.', 'error');
                     finishProcess(false);
                     return;
                 }
@@ -124,20 +133,20 @@
                 state.total = state.queue.length;
 
                 if (state.total === 0) {
-                    appendLog('All image attachments are already fully optimized.', 'success');
+                    appendFeed('All media attachments are currently up to date.', 'success');
                     $progressStatus.text(config.i18n.completed);
                     updateProgressUI();
                     finishProcess(true);
                     return;
                 }
 
-                appendLog('Queue initialized: ' + state.total + ' images pending optimization.', 'info');
+                appendFeed('Found ' + state.total + ' images requiring processing.', 'info');
                 updateProgressUI();
-                $activeItemBox.slideDown(200);
+                $activeItemBox.fadeIn(150);
                 processNextItem();
             },
             error: function () {
-                appendLog('Server error connecting to queue endpoint.', 'error');
+                appendFeed('Server error connecting to queue endpoint.', 'error');
                 finishProcess(false);
             }
         });
@@ -147,25 +156,24 @@
         if (!state.isRunning) return;
 
         if (state.isPaused) {
-            updatePill('Paused', 'idle');
             $progressStatus.text(config.i18n.paused);
             $btnPause.hide();
             $btnResume.show();
-            appendLog('Bulk runner paused by user.', 'warn');
+            appendFeed('Optimization paused.', 'warn');
             return;
         }
 
         if (state.currentIndex >= state.queue.length) {
-            appendLog('Bulk optimization completed successfully.', 'success');
+            appendFeed('Batch run complete: all library assets optimized.', 'success');
             $progressStatus.text(config.i18n.completed);
-            $activeItemBox.slideUp(200);
+            $activeItemBox.fadeOut(150);
             finishProcess(true);
             return;
         }
 
         const attachmentId = state.queue[state.currentIndex];
-        $activeFilename.text('Attachment #' + attachmentId);
-        $activeSavings.text('Optimizing...');
+        $activeFilename.text('#' + attachmentId);
+        $activeSavings.text('Compressing...');
 
         $.ajax({
             url: config.ajaxUrl,
@@ -181,32 +189,32 @@
                     const data = res.data;
                     const savedFormatted = formatBytes(data.bytes_saved);
                     $activeFilename.text(data.filename);
-                    $activeSavings.text('-' + data.compression_ratio + '% (' + savedFormatted + ' saved)');
+                    $activeSavings.text('-' + data.compression_ratio + '% (' + savedFormatted + ')');
 
-                    const logMsg = '(' + (state.currentIndex + 1) + '/' + state.total + ') ' +
+                    const feedText = '(' + (state.currentIndex + 1) + '/' + state.total + ') ' +
                         data.filename + ' -> Saved ' + savedFormatted + ' (-' + data.compression_ratio + '%)' +
-                        (data.webp_count > 0 ? ' [+' + data.webp_count + ' WebP]' : '');
-                    appendLog(logMsg, 'success');
+                        (data.webp_count > 0 ? ' [WebP generated]' : '');
+                    appendFeed(feedText, 'success');
 
-                    updateStatCards(data.stats);
+                    updateTelemetry(data.stats);
                 } else {
                     state.errorCount++;
-                    const errMsg = res.data ? res.data.message : 'Unknown optimization error';
-                    appendLog('Error on attachment #' + attachmentId + ': ' + errMsg, 'warn');
+                    const errMsg = res.data ? res.data.message : 'Processing error';
+                    appendFeed('Skipped #' + attachmentId + ': ' + errMsg, 'warn');
                 }
 
                 state.currentIndex++;
                 updateProgressUI();
 
-                // Small breath to avoid thread locking
-                setTimeout(processNextItem, 60);
+                // Non-blocking yield for browser paint
+                setTimeout(processNextItem, 50);
             },
-            error: function (xhr) {
+            error: function () {
                 state.errorCount++;
-                appendLog('Network or memory error on item #' + attachmentId + '. Continuing queue...', 'error');
+                appendFeed('Network timeout on #' + attachmentId + '. Moving to next asset...', 'error');
                 state.currentIndex++;
                 updateProgressUI();
-                setTimeout(processNextItem, 150);
+                setTimeout(processNextItem, 120);
             }
         });
     }
@@ -219,9 +227,8 @@
         state.isPaused = false;
         $btnResume.hide();
         $btnPause.show();
-        updatePill('Running', 'running');
         $progressStatus.text(config.i18n.optimizing);
-        appendLog('Resuming optimization queue...', 'info');
+        appendFeed('Resuming optimization batch...', 'info');
         processNextItem();
     }
 
@@ -231,7 +238,6 @@
         $btnPause.hide();
         $btnResume.hide();
         $btnStart.show();
-        updatePill(allDone ? 'Completed' : 'Idle', allDone ? 'completed' : 'idle');
     }
 
     function resetIndex() {
@@ -249,8 +255,8 @@
             },
             success: function (res) {
                 if (res.success) {
-                    appendLog('Optimization index wiped. All attachments marked pending.', 'warn');
-                    updateStatCards(res.data.stats);
+                    appendFeed('Optimization index wiped. All media attachments set to pending.', 'warn');
+                    updateTelemetry(res.data.stats);
                     state.currentIndex = 0;
                     state.total = 0;
                     updateProgressUI();
@@ -260,7 +266,7 @@
         });
     }
 
-    // Bind Event Listeners
+    // Attach listeners
     $btnStart.on('click', startBulkProcess);
     $btnPause.on('click', pauseBulkProcess);
     $btnResume.on('click', resumeBulkProcess);

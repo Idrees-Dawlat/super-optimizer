@@ -154,6 +154,14 @@ class Optimizer
             }
         }
 
+        // Calculate master file savings (direct disk or next-gen WebP transfer savings)
+        $full_direct_saved = max(0, $full_orig_size - $full_final_size);
+        $full_webp_saved   = ($full_webp_size > 0 && $full_webp_size < $full_orig_size) ? ($full_orig_size - $full_webp_size) : 0;
+        $full_saved        = max($full_direct_saved, $full_webp_saved);
+
+        $effective_full_optimized = $full_orig_size - $full_saved;
+        $total_optimized_bytes += $effective_full_optimized;
+
         // Record master subsize in relational table
         Repository::upsert_subsize([
             'item_id'        => $item_id,
@@ -163,7 +171,7 @@ class Optimizer
             'width'          => $metadata['width'] ?? null,
             'height'         => $metadata['height'] ?? null,
             'original_size'  => $full_orig_size,
-            'optimized_size' => $full_final_size,
+            'optimized_size' => $effective_full_optimized,
             'bytes_saved'    => $full_saved,
             'webp_path'      => $full_webp_path,
             'webp_size'      => $full_webp_size,
@@ -205,9 +213,6 @@ class Optimizer
                     @unlink($thumb_temp);
                 }
 
-                $total_optimized_bytes += $thumb_final_size;
-                $thumb_saved = max(0, $thumb_orig_size - $thumb_final_size);
-
                 // WebP Sibling for thumbnail
                 $thumb_webp_path = null;
                 $thumb_webp_size = 0;
@@ -230,6 +235,13 @@ class Optimizer
                     }
                 }
 
+                $thumb_direct_saved = max(0, $thumb_orig_size - $thumb_final_size);
+                $thumb_webp_saved   = ($thumb_webp_size > 0 && $thumb_webp_size < $thumb_orig_size) ? ($thumb_orig_size - $thumb_webp_size) : 0;
+                $thumb_saved        = max($thumb_direct_saved, $thumb_webp_saved);
+
+                $effective_thumb_optimized = $thumb_orig_size - $thumb_saved;
+                $total_optimized_bytes += $effective_thumb_optimized;
+
                 // Record each thumbnail subsize row
                 Repository::upsert_subsize([
                     'item_id'        => $item_id,
@@ -239,7 +251,7 @@ class Optimizer
                     'width'          => $size_info['width'] ?? null,
                     'height'         => $size_info['height'] ?? null,
                     'original_size'  => $thumb_orig_size,
-                    'optimized_size' => $thumb_final_size,
+                    'optimized_size' => $effective_thumb_optimized,
                     'bytes_saved'    => $thumb_saved,
                     'webp_path'      => $thumb_webp_path,
                     'webp_size'      => $thumb_webp_size,
