@@ -41,9 +41,10 @@ class BulkRunner
 
         $limit  = isset($_POST['limit']) ? min(1000, max(1, (int) $_POST['limit'])) : 500;
         $offset = isset($_POST['offset']) ? max(0, (int) $_POST['offset']) : 0;
+        $force  = !empty($_POST['force_reoptimize']);
 
-        $ids   = Repository::get_unoptimized_attachment_ids($limit, $offset);
-        $total = Repository::count_unoptimized_attachments();
+        $ids   = Repository::get_queue_attachment_ids($limit, $offset, $force);
+        $total = Repository::count_queue_attachments($force);
 
         wp_send_json_success([
             'ids'         => $ids,
@@ -68,7 +69,8 @@ class BulkRunner
             wp_send_json_error(['message' => 'Invalid attachment ID provided.'], 400);
         }
 
-        $result = Optimizer::optimize_attachment($attachment_id);
+        $webp_only = !empty($_POST['webp_only']);
+        $result    = Optimizer::optimize_attachment($attachment_id, $webp_only);
 
         if (!$result['success']) {
             wp_send_json_error([

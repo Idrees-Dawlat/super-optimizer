@@ -46,6 +46,9 @@ if (!function_exists('wp_parse_args')) {
 if (!function_exists('sanitize_text_field')) {
     function sanitize_text_field($str) { return trim(strip_tags((string)$str)); }
 }
+if (!function_exists('sanitize_textarea_field')) {
+    function sanitize_textarea_field($str) { return trim(strip_tags((string)$str)); }
+}
 if (!function_exists('sanitize_key')) {
     function sanitize_key($key) { return strtolower(preg_replace('/[^a-z0-9_\-]/', '', (string)$key)); }
 }

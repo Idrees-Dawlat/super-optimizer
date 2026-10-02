@@ -23,9 +23,10 @@ class Optimizer
      * Executes complete optimization pipeline on a WordPress attachment.
      *
      * @param int $attachment_id WordPress attachment ID.
+     * @param bool $webp_only If true, skips re-compressing original file and only generates WebP.
      * @return array Result summary with status and byte savings.
      */
-    public static function optimize_attachment(int $attachment_id): array
+    public static function optimize_attachment(int $attachment_id, bool $webp_only = false): array
     {
         $file_path = get_attached_file($attachment_id);
         if (!$file_path || !file_exists($file_path)) {
@@ -43,7 +44,7 @@ class Optimizer
 
         $mime_type = get_post_mime_type($attachment_id);
         $settings  = Settings::get_all();
-        $engine    = EngineFactory::get_engine($settings['selected_engine']);
+        $engine    = EngineFactory::get_engine($settings['selected_engine'] ?? 'auto');
 
         if (!$engine || !$engine->is_available()) {
             return [
@@ -72,7 +73,7 @@ class Optimizer
             $quality = (int) $settings['quality_png'];
         }
 
-        $strip_metadata = !empty($settings['strip_metadata']);
+        $strip_metadata = !empty($settings['remove_metadata']) || !empty($settings['strip_metadata']);
         $metadata       = wp_get_attachment_metadata($attachment_id) ?: [];
 
         // 1. Initial Master Item Record (Mark as processing)
@@ -91,8 +92,8 @@ class Optimizer
         $generated_webp_count  = 0;
         $generated_avif_count  = 0;
 
-        // 2. Auto-downscale original if dimensions exceed configured maximums
-        if (!empty($settings['auto_resize'])) {
+        // 2. Auto-downscale original if dimensions exceed configured maximums (unless in webp_only mode)
+        if (!empty($settings['auto_resize']) && !$webp_only) {
             $max_w = (int) $settings['max_width'];
             $max_h = (int) $settings['max_height'];
 
@@ -107,27 +108,24 @@ class Optimizer
             }
         }
 
-        // 3. Optimize Master Full-Size Image
+        // 3. Optimize Master Full-Size Image (Skip direct compression if in WebP-only mode)
         $full_orig_size = (int) @filesize($file_path);
         $total_original_bytes += $full_orig_size;
 
         $temp_full = $file_path . '.tmp_opt';
-        $full_optimized = false;
+        $full_final_size = $full_orig_size;
 
-        if ($engine->optimize($file_path, $temp_full, $mime_type, $quality, $strip_metadata)) {
+        if (!$webp_only && $engine->optimize($file_path, $temp_full, $mime_type, $quality, $strip_metadata)) {
             $temp_size = (int) @filesize($temp_full);
             // Only replace if optimized file is smaller or equal
             if ($temp_size > 0 && $temp_size < $full_orig_size) {
                 @rename($temp_full, $file_path);
                 $full_final_size = $temp_size;
-                $full_optimized  = true;
             } else {
                 @unlink($temp_full);
-                $full_final_size = $full_orig_size;
             }
         } else {
             @unlink($temp_full);
-            $full_final_size = $full_orig_size;
         }
 
         $total_optimized_bytes += $full_final_size;
@@ -201,7 +199,7 @@ class Optimizer
                 $thumb_temp = $thumb_path . '.tmp_opt';
                 $thumb_final_size = $thumb_orig_size;
 
-                if ($engine->optimize($thumb_path, $thumb_temp, $size_info['mime-type'] ?? $mime_type, $quality, $strip_metadata)) {
+                if (!$webp_only && $engine->optimize($thumb_path, $thumb_temp, $size_info['mime-type'] ?? $mime_type, $quality, $strip_metadata)) {
                     $t_size = (int) @filesize($thumb_temp);
                     if ($t_size > 0 && $t_size < $thumb_orig_size) {
                         @rename($thumb_temp, $thumb_path);

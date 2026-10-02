@@ -1,7 +1,8 @@
 /**
- * Super Optimizer - Bulk Queue Runner & Real-Time Telemetry
+ * Super Optimizer - Bulk Queue Controller
  *
- * Single-loop asynchronous queue runner updating integrated telemetry.
+ * Implements resilient batch processing with user-controlled throttle delay,
+ * force re-optimize, and WebP-only conversion options.
  *
  * @package SuperOptimizer\Admin
  */
@@ -24,28 +25,45 @@
         errorCount: 0
     };
 
-    // DOM Elements
-    const $btnStart       = $('#btn-start-bulk');
-    const $btnPause       = $('#btn-pause-bulk');
-    const $btnResume      = $('#btn-resume-bulk');
-    const $btnReset       = $('#btn-reset-index');
-    const $btnClearLog    = $('#btn-clear-console');
-    const $progressBar    = $('#bulk-progress-bar');
-    const $progressPct    = $('#bulk-progress-pct');
-    const $progressStatus = $('#bulk-progress-status');
-    const $progressCounts = $('#bulk-progress-counts');
-    const $activeItemBox  = $('#so-active-item');
-    const $activeFilename = $('#so-current-filename');
-    const $activeSavings  = $('#so-current-savings');
-    const $consoleStream  = $('#so-console-stream');
+    // DOM Controls
+    const $btnStart          = $('#btn-start-bulk');
+    const $btnPause          = $('#btn-pause-bulk');
+    const $btnResume         = $('#btn-resume-bulk');
+    const $btnReset          = $('#btn-reset-index');
+    const $btnClearLog       = $('#btn-clear-console');
+    const $progressBar       = $('#bulk-progress-bar');
+    const $progressPct       = $('#bulk-progress-pct');
+    const $progressStatus    = $('#bulk-progress-status');
+    const $progressCounts    = $('#bulk-progress-counts');
+    const $activeItemBox     = $('#so-active-item');
+    const $activeFilename    = $('#so-current-filename');
+    const $activeSavings     = $('#so-current-savings');
+    const $consoleStream     = $('#so-console-stream');
 
-    // Telemetry DOM elements
+    // Options checkboxes & inputs
+    const $chkForceReopt     = $('#bulk_force_reoptimize');
+    const $chkWebpOnly       = $('#bulk_webp_only');
+    const $chkBackground     = $('#bulk_background_mode');
+    const $inputPauseSeconds = $('#bulk_pause_seconds');
+    const $sliderPause       = $('#bulk_pause_slider');
+
+    // Telemetry displays
     const $statTimeSaved      = $('#stat-time-saved');
     const $statBytesSaved     = $('#stat-bytes-saved');
     const $statPercentage     = $('#stat-percentage');
     const $statOptimizedCount = $('#stat-optimized-count');
-    const $statSubsizesDesc   = $('#stat-subsizes-desc');
     const $statNextgenCount   = $('#stat-nextgen-count');
+    const $soQueueCount       = $('#so-queue-count');
+
+    // Sync pause slider and number input
+    if ($inputPauseSeconds.length && $sliderPause.length) {
+        $inputPauseSeconds.on('input change', function () {
+            $sliderPause.val($(this).val());
+        });
+        $sliderPause.on('input change', function () {
+            $inputPauseSeconds.val($(this).val());
+        });
+    }
 
     function formatBytes(bytes) {
         if (bytes <= 0) return '0 B';
@@ -60,11 +78,11 @@
         return d.toTimeString().split(' ')[0];
     }
 
-    function appendFeed(message, type) {
+    function appendLog(message, type) {
         type = type || 'info';
-        const $line = $('<div class="so-feed-item so-' + type + '"></div>');
-        $line.append('<span class="so-feed-time">' + getTimeStamp() + '</span>');
-        $line.append('<span class="so-feed-text">' + message + '</span>');
+        const $line = $('<div class="so-log-line so-' + type + '"></div>');
+        $line.append('<span class="so-log-time">' + getTimeStamp() + '</span>');
+        $line.append('<span class="so-log-msg">' + message + '</span>');
         $consoleStream.append($line);
         $consoleStream.scrollTop($consoleStream[0].scrollHeight);
     }
@@ -89,20 +107,20 @@
             $statBytesSaved.text(formatBytes(stats.total_bytes_saved));
         }
         if ($statPercentage.length) {
-            $statPercentage.text(stats.percentage_saved);
+            $statPercentage.text('(' + stats.percentage_saved + '%)');
         }
         if ($statOptimizedCount.length) {
-            $statOptimizedCount.text(Number(stats.optimized_attachments).toLocaleString());
-        }
-        if ($statSubsizesDesc.length) {
-            $statSubsizesDesc.text(Number(stats.optimized_subsizes).toLocaleString() + ' thumbnails converted');
+            $statOptimizedCount.text(stats.optimized_attachments);
         }
         if ($statNextgenCount.length) {
-            $statNextgenCount.text(Number(stats.webp_count + stats.avif_count).toLocaleString());
+            $statNextgenCount.text(stats.webp_count);
         }
     }
 
     function startBulkProcess() {
+        const forceReopt = $chkForceReopt.is(':checked') ? 1 : 0;
+        const webpOnly   = $chkWebpOnly.is(':checked') ? 1 : 0;
+
         state.isRunning = true;
         state.isPaused = false;
         state.currentIndex = 0;
@@ -112,7 +130,7 @@
         $btnPause.show();
         $btnResume.hide();
         $progressStatus.text(config.i18n.optimizing);
-        appendFeed('Scanning media attachments for pending optimizations...', 'info');
+        appendLog('Scanning Media Library for items (Force Re-optimize: ' + (forceReopt ? 'Yes' : 'No') + ', WebP Only: ' + (webpOnly ? 'Yes' : 'No') + ')...', 'info');
 
         $.ajax({
             url: config.ajaxUrl,
@@ -120,11 +138,12 @@
             dataType: 'json',
             data: {
                 action: 'super_optimizer_bulk_get_queue',
-                nonce: config.nonce
+                nonce: config.nonce,
+                force_reoptimize: forceReopt
             },
             success: function (res) {
                 if (!res.success || !res.data) {
-                    appendFeed('Failed to query attachment queue.', 'error');
+                    appendLog('Failed to query Media Library queue.', 'error');
                     finishProcess(false);
                     return;
                 }
@@ -132,21 +151,25 @@
                 state.queue = res.data.ids || [];
                 state.total = state.queue.length;
 
+                if ($soQueueCount.length) {
+                    $soQueueCount.text(state.total);
+                }
+
                 if (state.total === 0) {
-                    appendFeed('All media attachments are currently up to date.', 'success');
+                    appendLog('All media images are already optimized.', 'success');
                     $progressStatus.text(config.i18n.completed);
                     updateProgressUI();
                     finishProcess(true);
                     return;
                 }
 
-                appendFeed('Found ' + state.total + ' images requiring processing.', 'info');
+                appendLog('Starting optimization: ' + state.total + ' images in queue.', 'info');
                 updateProgressUI();
-                $activeItemBox.fadeIn(150);
+                $activeItemBox.show();
                 processNextItem();
             },
             error: function () {
-                appendFeed('Server error connecting to queue endpoint.', 'error');
+                appendLog('Server communication failure while loading queue.', 'error');
                 finishProcess(false);
             }
         });
@@ -159,21 +182,25 @@
             $progressStatus.text(config.i18n.paused);
             $btnPause.hide();
             $btnResume.show();
-            appendFeed('Optimization paused.', 'warn');
+            appendLog('Optimization paused.', 'warn');
             return;
         }
 
         if (state.currentIndex >= state.queue.length) {
-            appendFeed('Batch run complete: all library assets optimized.', 'success');
+            appendLog('Optimization completed: all images processed.', 'success');
             $progressStatus.text(config.i18n.completed);
-            $activeItemBox.fadeOut(150);
+            $activeItemBox.hide();
             finishProcess(true);
             return;
         }
 
         const attachmentId = state.queue[state.currentIndex];
+        const webpOnly = $chkWebpOnly.is(':checked') ? 1 : 0;
+        const pauseSeconds = parseInt($inputPauseSeconds.val() || '0', 10);
+        const pauseMs = Math.max(50, pauseSeconds * 1000);
+
         $activeFilename.text('#' + attachmentId);
-        $activeSavings.text('Compressing...');
+        $activeSavings.text('Optimizing...');
 
         $.ajax({
             url: config.ajaxUrl,
@@ -182,7 +209,8 @@
             data: {
                 action: 'super_optimizer_bulk_process_item',
                 nonce: config.nonce,
-                attachment_id: attachmentId
+                attachment_id: attachmentId,
+                webp_only: webpOnly
             },
             success: function (res) {
                 if (res.success && res.data) {
@@ -193,28 +221,27 @@
 
                     const feedText = '(' + (state.currentIndex + 1) + '/' + state.total + ') ' +
                         data.filename + ' -> Saved ' + savedFormatted + ' (-' + data.compression_ratio + '%)' +
-                        (data.webp_count > 0 ? ' [WebP generated]' : '');
-                    appendFeed(feedText, 'success');
+                        (data.webp_count > 0 ? ' [WebP created]' : '');
+                    appendLog(feedText, 'success');
 
                     updateTelemetry(data.stats);
                 } else {
                     state.errorCount++;
-                    const errMsg = res.data ? res.data.message : 'Processing error';
-                    appendFeed('Skipped #' + attachmentId + ': ' + errMsg, 'warn');
+                    const errMsg = res.data ? res.data.message : 'Error processing image';
+                    appendLog('Skipped #' + attachmentId + ': ' + errMsg, 'warn');
                 }
 
                 state.currentIndex++;
                 updateProgressUI();
 
-                // Non-blocking yield for browser paint
-                setTimeout(processNextItem, 50);
+                setTimeout(processNextItem, pauseMs);
             },
             error: function () {
                 state.errorCount++;
-                appendFeed('Network timeout on #' + attachmentId + '. Moving to next asset...', 'error');
+                appendLog('Network timeout on #' + attachmentId + '. Moving forward...', 'error');
                 state.currentIndex++;
                 updateProgressUI();
-                setTimeout(processNextItem, 120);
+                setTimeout(processNextItem, Math.max(200, pauseMs));
             }
         });
     }
@@ -228,7 +255,7 @@
         $btnResume.hide();
         $btnPause.show();
         $progressStatus.text(config.i18n.optimizing);
-        appendFeed('Resuming optimization batch...', 'info');
+        appendLog('Resuming optimization...', 'info');
         processNextItem();
     }
 
@@ -255,7 +282,7 @@
             },
             success: function (res) {
                 if (res.success) {
-                    appendFeed('Optimization index wiped. All media attachments set to pending.', 'warn');
+                    appendLog('Optimization status records reset. All images set to pending.', 'warn');
                     updateTelemetry(res.data.stats);
                     state.currentIndex = 0;
                     state.total = 0;

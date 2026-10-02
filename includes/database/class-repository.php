@@ -190,36 +190,68 @@ class Repository
      * @param int $offset Offset.
      * @return int[]
      */
-    public static function get_unoptimized_attachment_ids(int $limit = 50, int $offset = 0): array
+    /**
+     * Queries un-optimized or pending attachment IDs from WordPress media library.
+     *
+     * @param int $limit Number of IDs to fetch.
+     * @param int $offset Offset.
+     * @param bool $force_all If true, returns all image attachment IDs regardless of previous optimization status.
+     * @return int[]
+     */
+    public static function get_queue_attachment_ids(int $limit = 500, int $offset = 0, bool $force_all = false): array
     {
         global $wpdb;
         $table_items = Schema::get_items_table();
 
-        // Select image attachments that either have no item record or are marked pending/failed
-        $sql = "
-            SELECT p.ID
-            FROM {$wpdb->posts} p
-            LEFT JOIN {$table_items} i ON p.ID = i.attachment_id
-            WHERE p.post_type = 'attachment'
-              AND p.post_mime_type IN ('image/jpeg', 'image/jpg', 'image/png', 'image/webp')
-              AND (i.id IS NULL OR i.status IN ('pending', 'failed'))
-            ORDER BY p.ID DESC
-            LIMIT %d OFFSET %d
-        ";
+        if ($force_all) {
+            $sql = "
+                SELECT ID
+                FROM {$wpdb->posts}
+                WHERE post_type = 'attachment'
+                  AND post_mime_type IN ('image/jpeg', 'image/jpg', 'image/png', 'image/webp')
+                ORDER BY ID DESC
+                LIMIT %d OFFSET %d
+            ";
+            $results = $wpdb->get_col($wpdb->prepare($sql, $limit, $offset));
+        } else {
+            $sql = "
+                SELECT p.ID
+                FROM {$wpdb->posts} p
+                LEFT JOIN {$table_items} i ON p.ID = i.attachment_id
+                WHERE p.post_type = 'attachment'
+                  AND p.post_mime_type IN ('image/jpeg', 'image/jpg', 'image/png', 'image/webp')
+                  AND (i.id IS NULL OR i.status IN ('pending', 'failed'))
+                ORDER BY p.ID DESC
+                LIMIT %d OFFSET %d
+            ";
+            $results = $wpdb->get_col($wpdb->prepare($sql, $limit, $offset));
+        }
 
-        $results = $wpdb->get_col($wpdb->prepare($sql, $limit, $offset));
         return array_map('intval', $results);
+    }
+
+    /**
+     * Backward-compatible alias for get_queue_attachment_ids.
+     */
+    public static function get_unoptimized_attachment_ids(int $limit = 500, int $offset = 0): array
+    {
+        return self::get_queue_attachment_ids($limit, $offset, false);
     }
 
     /**
      * Returns total count of image attachments needing optimization.
      *
+     * @param bool $force_all If true, counts all image attachments.
      * @return int
      */
-    public static function count_unoptimized_attachments(): int
+    public static function count_queue_attachments(bool $force_all = false): int
     {
         global $wpdb;
         $table_items = Schema::get_items_table();
+
+        if ($force_all) {
+            return self::count_total_library_images();
+        }
 
         $sql = "
             SELECT COUNT(p.ID)
@@ -234,21 +266,23 @@ class Repository
     }
 
     /**
-     * Returns total count of all supported image attachments in the media library.
+     * Backward-compatible alias for count_queue_attachments.
+     */
+    public static function count_unoptimized_attachments(): int
+    {
+        return self::count_queue_attachments(false);
+    }
+
+    /**
+     * Calculates the maximum/average registered thumbnail variations per upload.
      *
      * @return int
      */
-    public static function count_total_library_images(): int
+    public static function get_max_subsizes_per_upload(): int
     {
-        global $wpdb;
-        $sql = "
-            SELECT COUNT(ID)
-            FROM {$wpdb->posts}
-            WHERE post_type = 'attachment'
-              AND post_mime_type IN ('image/jpeg', 'image/jpg', 'image/png', 'image/webp')
-        ";
-
-        return (int) $wpdb->get_var($sql);
+        $sizes = wp_get_registered_image_subsizes();
+        $count = count($sizes);
+        return max(1, $count > 0 ? $count + 1 : 6);
     }
 
     /**
