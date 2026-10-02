@@ -69,12 +69,42 @@ if (!function_exists('wp_upload_dir')) {
         ];
     }
 }
-if (!function_exists('esc_attr')) {
-    function esc_attr($text) { return htmlspecialchars((string)$text, ENT_QUOTES, 'UTF-8'); }
+if (!function_exists('wp_get_registered_image_subsizes')) {
+    function wp_get_registered_image_subsizes() {
+        return ['thumbnail' => [], 'medium' => [], 'large' => []];
+    }
 }
-if (!function_exists('esc_url')) {
-    function esc_url($url) { return filter_var($url, FILTER_SANITIZE_URL); }
+
+class MockWpdb {
+    public $prefix = 'wp_';
+    public $posts = 'wp_posts';
+    public function get_var($query) { return 18; }
+    public function get_row($query, $output = 'OBJECT') {
+        if ($output === 'ARRAY_A' || $output === ARRAY_A) {
+            return [
+                'optimized_attachments' => 16,
+                'total_original_bytes' => 1048576,
+                'total_optimized_bytes' => 524288,
+                'total_bytes_saved' => 524288,
+                'webp_count' => 16,
+                'avif_count' => 0,
+            ];
+        }
+        return (object)[];
+    }
+    public function get_col($query) { return [1, 2, 3]; }
+    public function get_results($query) { return []; }
+    public function prepare($query, ...$args) { return $query; }
+    public function insert($table, $data, $format = null) { return 1; }
+    public function update($table, $data, $where, $format = null, $where_format = null) { return 1; }
+    public function delete($table, $where, $where_format = null) { return 1; }
+    public function query($query) { return true; }
+    public function get_charset_collate() { return 'DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'; }
 }
+if (!defined('ARRAY_A')) define('ARRAY_A', 'ARRAY_A');
+if (!defined('OBJECT')) define('OBJECT', 'OBJECT');
+global $wpdb;
+$wpdb = new MockWpdb();
 
 // Require autoloader logic from super-optimizer.php
 require_once __DIR__ . '/../super-optimizer.php';
@@ -144,8 +174,22 @@ if (SuperOptimizer\Admin::format_bytes(1048576) !== '1 MB' || SuperOptimizer\Adm
 }
 echo "PASSED\n";
 
-// Test 5: Distribution Zip Verification
-echo "Test 5: Validating dist/super-optimizer.zip... ";
+// Test 5: Repository Methods Execution
+echo "Test 5: Repository query methods & stats... ";
+$stats = SuperOptimizer\Database\Repository::get_global_stats();
+$total_lib = SuperOptimizer\Database\Repository::count_total_library_images();
+$queue_cnt = SuperOptimizer\Database\Repository::count_queue_attachments();
+$queue_ids = SuperOptimizer\Database\Repository::get_queue_attachment_ids();
+$sub_count = SuperOptimizer\Database\Repository::get_max_subsizes_per_upload();
+
+if (empty($stats) || !isset($stats['total_original_bytes']) || $total_lib <= 0 || empty($queue_ids)) {
+    echo "FAILED: Repository execution failure\n";
+    exit(1);
+}
+echo "PASSED\n";
+
+// Test 6: Distribution Zip Verification
+echo "Test 6: Validating dist/super-optimizer.zip... ";
 $zip_path = __DIR__ . '/../dist/super-optimizer.zip';
 if (!file_exists($zip_path)) {
     echo "FAILED: dist/super-optimizer.zip does not exist\n";

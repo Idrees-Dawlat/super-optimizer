@@ -274,6 +274,24 @@ class Repository
     }
 
     /**
+     * Returns total count of all supported image attachments in the media library.
+     *
+     * @return int
+     */
+    public static function count_total_library_images(): int
+    {
+        global $wpdb;
+        $sql = "
+            SELECT COUNT(ID)
+            FROM {$wpdb->posts}
+            WHERE post_type = 'attachment'
+              AND post_mime_type IN ('image/jpeg', 'image/jpg', 'image/png', 'image/webp')
+        ";
+
+        return (int) $wpdb->get_var($sql);
+    }
+
+    /**
      * Calculates the maximum/average registered thumbnail variations per upload.
      *
      * @return int

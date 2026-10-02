@@ -33,7 +33,7 @@ $bulk_url = admin_url('upload.php?page=super-optimizer-bulk');
         </div>
     <?php endif; ?>
 
-    <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+    <form method="post" action="">
         <?php wp_nonce_field('super_optimizer_settings_nonce'); ?>
         <input type="hidden" name="super_optimizer_save_settings" value="1">
         <input type="hidden" name="redirect_page" value="super-optimizer-settings">

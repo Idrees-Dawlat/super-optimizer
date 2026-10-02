@@ -34,10 +34,10 @@ class Admin
      */
     public static function register_admin_menu(): void
     {
-        // 1. Media -> Bulk Optimize (Matches EWWW pattern requested by user)
+        // 1. Media -> Super Optimizer (avoids text conflict with other image plugins)
         add_media_page(
-            __('Bulk Optimize', 'super-optimizer'),
-            __('Bulk Optimize', 'super-optimizer'),
+            __('Super Optimizer', 'super-optimizer'),
+            __('Super Optimizer', 'super-optimizer'),
             'manage_options',
             'super-optimizer-bulk',
             [__CLASS__, 'render_bulk_page']
