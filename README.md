@@ -1,64 +1,63 @@
-﻿# Super Optimizer 🚀
+# Super Optimizer
 
-> **High-performance, 100% free, local WordPress image optimization engine.**
-> Pro-grade lossy compression, WebP/AVIF generation, auto-resizing, and crash-proof bulk optimization — without subscriptions, credit limits, or cloud locks.
-
----
-
-## 🌟 Why Super Optimizer?
-
-Most WordPress image optimizer plugins (EWWW, Smush, ShortPixel, Imagify) use restrictive freemium models:
-* Free tiers only offer weak lossless compression (~5–10% file size reduction).
-* High-ratio lossy compression and modern formats are locked behind paid cloud subscriptions.
-* They enforce monthly image credits and bombard the admin dashboard with upsell banners.
-
-**Super Optimizer** eliminates the middleman:
-* ⚡ **100% Free Forever:** No API keys, no monthly image caps, no cloud costs.
-* 🖥️ **100% Local Processing:** Runs securely on your own server using PHP's native Imagick or GD engine.
-* 📉 **Real Pro Compression:** Visual lossy compression (80–82% quality) achieving **60%–80% file size savings** indistinguishable to the human eye.
-* 🧼 **Zero Bloat:** No ads, no telemetry, no nag screens.
+A high-performance, local WordPress image optimization engine engineered for speed, reliability, and precision. Pro-grade lossy compression, WebP and AVIF generation, auto-resizing, and crash-proof bulk optimization without cloud dependencies, credit limits, or telemetry.
 
 ---
 
-## ✨ Planned Features
+## Overview
 
-### 1. High-Efficiency Local Compression
-- **WebP & AVIF Conversion:** Automatically generates next-gen format siblings for all uploaded media.
-- **Smart Lossy Slider:** Fine-tune image quality (default 82%) for the optimal balance between size and quality.
-- **EXIF & Metadata Stripping:** Safely removes bloated camera metadata (GPS, device info) to shave off unnecessary kilobytes.
+Most WordPress image optimizer plugins enforce freemium restrictions:
+* Free tiers only provide weak lossless compression with 5% to 10% file size reduction.
+* High-ratio lossy compression and next-generation formats are locked behind paid cloud subscriptions.
+* They enforce monthly image quotas and add intrusive dashboard banners.
 
-### 2. Auto-Resize on Upload
-- Automatically detects massive high-resolution photos (e.g., 5000px+, 10MB+ phone uploads).
-- Scales them down to a customizable web-safe maximum (e.g., 2048px) *before* generating thumbnails, saving immense disk space.
-
-### 3. Automatic Upload Hook
-- Set it and forget it workflow.
-- Hooks directly into wp_generate_attachment_metadata to optimize originals and all registered sub-sizes (	humbnail, medium, large, etc.) on upload.
-
-### 4. Crash-Proof Bulk Optimizer
-- Live AJAX-driven batch queue to optimize existing media libraries.
-- Processes 1–2 attachments per step to eliminate PHP max_execution_time timeouts and memory limit crashes on shared hosting.
-- Real-time statistics: files processed, total MB saved, and percentage reduction.
-- Full pause, cancel, and auto-resume capabilities.
-
-### 5. Transparent Next-Gen Delivery
-- **Rewrite Rules:** Native .htaccess / Nginx rewrite rules to serve .webp transparently without altering your WordPress post database content.
-- **Picture Tag Fallback:** Optional frontend HTML filter replacing <img> tags with <picture> tags.
-
-### 6. Safe Local Backups & One-Click Restore
-- Keep original uncompressed copies in a local /uploads/super-optimizer-backups/ directory.
-- Instant one-click restore per media item or across the entire library.
+Super Optimizer provides an enterprise-grade local processing architecture:
+* Zero Cloud Dependencies: Runs entirely on your host infrastructure using PHP Imagick or GD.
+* High-Ratio Compression: Tuned visual lossy compression achieving 60% to 80% file size reduction without perceptible quality degradation.
+* Relational Queue & State Machine: Dedicated database tables with indexed one-to-many entity relationships tracking master attachments and sub-sizes.
+* Non-Blocking Architecture: Batch-isolated AJAX execution designed to avoid timeouts and memory exhaustion on shared and enterprise hosts alike.
+* Zero Telemetry and Bloat: Clean, focused codebase with zero external tracking scripts or advertisements.
 
 ---
 
-## 🛠️ Requirements
+## Core Architecture
 
-- **WordPress:** 6.0 or higher
-- **PHP:** 7.4 to 8.3+
-- **PHP Extensions:** Imagick (recommended) or GD with WebP support
+### 1. Relational Database Schema
+Super Optimizer isolates optimization state into dedicated, high-performance database tables rather than bloating `wp_postmeta`:
+* `wp_super_optimizer_items`: Master entity tracking attachment ID, MIME type, original byte size, optimized byte size, bytes saved, compression ratio, next-gen format flags, and lifecycle state (`pending`, `processing`, `completed`, `failed`).
+* `wp_super_optimizer_subsizes`: Child entity maintaining a strict one-to-many relationship with master items. Tracks individual WordPress sub-sizes (e.g., `full`, `thumbnail`, `medium`, `large`, custom theme crops), dimensions, file paths, WebP/AVIF siblings, and savings.
+* Automatic lifecycle hooks: WordPress attachment deletion triggers cascading cleanup to prevent orphaned records.
+
+### 2. Dual-Engine Processing Pipeline
+* Primary Driver: PHP `Imagick` (ImageMagick) with custom sampling factors, colorspace preservation, and EXIF/metadata stripping.
+* Fallback Driver: PHP `GD` with truecolor resampling and native WebP/AVIF output.
+* Safe Processing: Verifies file headers, MIME types, and available memory before initiating transformations.
+
+### 3. Upload Optimization & Downscaling
+* Intercepts media uploads before sub-size generation.
+* Scales excessive raw resolutions (e.g. 6000px camera uploads) down to a configurable web-safe maximum (default 2048px).
+* Automatically optimizes all generated WordPress thumbnail variations.
+
+### 4. Resilient Bulk Processing Engine
+* Browser-managed AJAX queue processing items in atomic chunks.
+* Heartbeat monitoring with auto-pause, resume, and individual error logging.
+* Live dashboard showing processed items, storage saved, and reduction percentages.
+
+### 5. Next-Generation Format Delivery
+* Generates sibling `.webp` and `.avif` files alongside standard JPEG/PNG assets.
+* Transparent frontend delivery via responsive HTML `<picture>` tag rewriting or server rewrite rules.
 
 ---
 
-## 📄 License
+## System Requirements
+
+* WordPress: 6.0 or higher
+* PHP: 7.4 to 8.3+
+* PHP Extensions: `imagick` (recommended) or `gd` with WebP support
+
+---
+
+## License
 
 GPL-2.0-or-later
+
