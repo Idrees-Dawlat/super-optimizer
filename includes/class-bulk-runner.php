@@ -23,9 +23,52 @@ class BulkRunner
      */
     public static function init(): void
     {
+        add_action('wp_ajax_super_optimizer_bulk_scan', [__CLASS__, 'ajax_scan_library']);
         add_action('wp_ajax_super_optimizer_bulk_get_queue', [__CLASS__, 'ajax_get_queue']);
         add_action('wp_ajax_super_optimizer_bulk_process_item', [__CLASS__, 'ajax_process_item']);
         add_action('wp_ajax_super_optimizer_bulk_reset', [__CLASS__, 'ajax_reset_queue']);
+    }
+
+    /**
+     * Scans media library and returns real-time diagnostics on unoptimized assets.
+     */
+    public static function ajax_scan_library(): void
+    {
+        check_ajax_referer('super_optimizer_bulk_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Unauthorized permission level.'], 403);
+        }
+
+        $force = !empty($_POST['force_reoptimize']);
+        $total_library = Repository::count_total_library_images();
+        $pending_count = Repository::count_queue_attachments(false);
+        $max_thumbs    = Repository::get_max_subsizes_per_upload();
+        $stats         = Repository::get_global_stats();
+
+        $active_queue_count = $force ? $total_library : $pending_count;
+
+        if ($active_queue_count > 0) {
+            $message = sprintf(
+                __('Scan complete: %1$d image attachments (%2$d thumbnails) ready for optimization.', 'super-optimizer'),
+                $active_queue_count,
+                $active_queue_count * $max_thumbs
+            );
+        } else {
+            $message = sprintf(
+                __('Scan complete: All %d media library images are currently optimized with WebP siblings.', 'super-optimizer'),
+                $total_library
+            );
+        }
+
+        wp_send_json_success([
+            'total_library'      => $total_library,
+            'pending_count'      => $pending_count,
+            'active_queue_count' => $active_queue_count,
+            'max_thumbs'         => $max_thumbs,
+            'stats'              => $stats,
+            'message'            => $message,
+        ]);
     }
 
     /**

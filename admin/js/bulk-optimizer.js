@@ -1,8 +1,7 @@
 /**
- * Super Optimizer - Bulk Queue Controller
+ * Super Optimizer - Bulk Queue & Library Scanner Controller
  *
- * Implements resilient batch processing with user-controlled throttle delay,
- * force re-optimize, and WebP-only conversion options.
+ * Provides real-time library scanning and batch optimization.
  *
  * @package SuperOptimizer\Admin
  */
@@ -26,11 +25,15 @@
     };
 
     // DOM Controls
+    const $btnScan           = $('#btn-scan-library');
+    const $btnScanText       = $('#btn-scan-text');
     const $btnStart          = $('#btn-start-bulk');
     const $btnPause          = $('#btn-pause-bulk');
     const $btnResume         = $('#btn-resume-bulk');
     const $btnReset          = $('#btn-reset-index');
     const $btnClearLog       = $('#btn-clear-console');
+
+    // Progress elements
     const $progressBar       = $('#bulk-progress-bar');
     const $progressPct       = $('#bulk-progress-pct');
     const $progressStatus    = $('#bulk-progress-status');
@@ -40,12 +43,14 @@
     const $activeSavings     = $('#so-current-savings');
     const $consoleStream     = $('#so-console-stream');
 
-    // Options checkboxes & inputs
+    // Headline elements
+    const $scanHeadline      = $('#so-scan-headline');
+    const $scanSubline       = $('#so-scan-subline');
+
+    // Options
     const $chkForceReopt     = $('#bulk_force_reoptimize');
     const $chkWebpOnly       = $('#bulk_webp_only');
-    const $chkBackground     = $('#bulk_background_mode');
-    const $inputPauseSeconds = $('#bulk_pause_seconds');
-    const $sliderPause       = $('#bulk_pause_slider');
+    const $selectPause       = $('#bulk_pause_seconds');
 
     // Telemetry displays
     const $statTimeSaved      = $('#stat-time-saved');
@@ -53,17 +58,6 @@
     const $statPercentage     = $('#stat-percentage');
     const $statOptimizedCount = $('#stat-optimized-count');
     const $statNextgenCount   = $('#stat-nextgen-count');
-    const $soQueueCount       = $('#so-queue-count');
-
-    // Sync pause slider and number input
-    if ($inputPauseSeconds.length && $sliderPause.length) {
-        $inputPauseSeconds.on('input change', function () {
-            $sliderPause.val($(this).val());
-        });
-        $sliderPause.on('input change', function () {
-            $inputPauseSeconds.val($(this).val());
-        });
-    }
 
     function formatBytes(bytes) {
         if (bytes <= 0) return '0 B';
@@ -80,9 +74,9 @@
 
     function appendLog(message, type) {
         type = type || 'info';
-        const $line = $('<div class="so-log-line so-' + type + '"></div>');
-        $line.append('<span class="so-log-time">' + getTimeStamp() + '</span>');
-        $line.append('<span class="so-log-msg">' + message + '</span>');
+        const $line = $('<div class="so-feed-row so-' + type + '"></div>');
+        $line.append('<span class="so-feed-ts">' + getTimeStamp() + '</span>');
+        $line.append('<span class="so-feed-msg">' + message + '</span>');
         $consoleStream.append($line);
         $consoleStream.scrollTop($consoleStream[0].scrollHeight);
     }
@@ -94,7 +88,7 @@
 
         $progressBar.css('width', pct + '%');
         $progressPct.text(pct + '%');
-        $progressCounts.text(processed + ' / ' + total + ' images');
+        $progressCounts.text(processed + ' / ' + total + ' processed');
     }
 
     function updateTelemetry(stats) {
@@ -107,7 +101,7 @@
             $statBytesSaved.text(formatBytes(stats.total_bytes_saved));
         }
         if ($statPercentage.length) {
-            $statPercentage.text('(' + stats.percentage_saved + '%)');
+            $statPercentage.text('-' + stats.percentage_saved + '%');
         }
         if ($statOptimizedCount.length) {
             $statOptimizedCount.text(stats.optimized_attachments);
@@ -117,6 +111,60 @@
         }
     }
 
+    /**
+     * Scans Media Library on demand and updates UI summary.
+     */
+    function scanLibrary() {
+        const forceReopt = $chkForceReopt.is(':checked') ? 1 : 0;
+
+        $btnScan.prop('disabled', true);
+        $btnScanText.text('Scanning...');
+        appendLog('Scanning Media Library for images (Force Re-optimize: ' + (forceReopt ? 'Yes' : 'No') + ')...', 'info');
+
+        $.ajax({
+            url: config.ajaxUrl,
+            type: 'POST',
+            dataType: 'json',
+            data: {
+                action: 'super_optimizer_bulk_scan',
+                nonce: config.nonce,
+                force_reoptimize: forceReopt
+            },
+            success: function (res) {
+                $btnScan.prop('disabled', false);
+                $btnScanText.text('Scan Library');
+
+                if (!res.success || !res.data) {
+                    appendLog('Library scan failed.', 'error');
+                    return;
+                }
+
+                const data = res.data;
+                appendLog(data.message, 'success');
+
+                if ($scanHeadline.length) {
+                    if (data.active_queue_count > 0) {
+                        $scanHeadline.html('Found <strong>' + data.active_queue_count + '</strong> image attachments ready for optimization.');
+                    } else {
+                        $scanHeadline.html('All <strong>' + data.total_library + '</strong> media library images are currently optimized with WebP siblings.');
+                    }
+                }
+
+                $progressCounts.text('0 / ' + data.active_queue_count + ' processed');
+                $progressStatus.text('Scan complete: ' + data.active_queue_count + ' ready.');
+                updateTelemetry(data.stats);
+            },
+            error: function () {
+                $btnScan.prop('disabled', false);
+                $btnScanText.text('Scan Library');
+                appendLog('Server error connecting to scanner endpoint.', 'error');
+            }
+        });
+    }
+
+    /**
+     * Starts bulk processing batch queue.
+     */
     function startBulkProcess() {
         const forceReopt = $chkForceReopt.is(':checked') ? 1 : 0;
         const webpOnly   = $chkWebpOnly.is(':checked') ? 1 : 0;
@@ -130,7 +178,7 @@
         $btnPause.show();
         $btnResume.hide();
         $progressStatus.text(config.i18n.optimizing);
-        appendLog('Scanning Media Library for items (Force Re-optimize: ' + (forceReopt ? 'Yes' : 'No') + ', WebP Only: ' + (webpOnly ? 'Yes' : 'No') + ')...', 'info');
+        appendLog('Initializing optimization batch (WebP Only: ' + (webpOnly ? 'Yes' : 'No') + ')...', 'info');
 
         $.ajax({
             url: config.ajaxUrl,
@@ -151,10 +199,6 @@
                 state.queue = res.data.ids || [];
                 state.total = state.queue.length;
 
-                if ($soQueueCount.length) {
-                    $soQueueCount.text(state.total);
-                }
-
                 if (state.total === 0) {
                     appendLog('All media images are already optimized.', 'success');
                     $progressStatus.text(config.i18n.completed);
@@ -163,7 +207,7 @@
                     return;
                 }
 
-                appendLog('Starting optimization: ' + state.total + ' images in queue.', 'info');
+                appendLog('Starting queue: ' + state.total + ' images to process.', 'info');
                 updateProgressUI();
                 $activeItemBox.show();
                 processNextItem();
@@ -187,7 +231,7 @@
         }
 
         if (state.currentIndex >= state.queue.length) {
-            appendLog('Optimization completed: all images processed.', 'success');
+            appendLog('Optimization complete: all images processed successfully.', 'success');
             $progressStatus.text(config.i18n.completed);
             $activeItemBox.hide();
             finishProcess(true);
@@ -196,11 +240,11 @@
 
         const attachmentId = state.queue[state.currentIndex];
         const webpOnly = $chkWebpOnly.is(':checked') ? 1 : 0;
-        const pauseSeconds = parseInt($inputPauseSeconds.val() || '0', 10);
+        const pauseSeconds = parseInt($selectPause.val() || '0', 10);
         const pauseMs = Math.max(50, pauseSeconds * 1000);
 
         $activeFilename.text('#' + attachmentId);
-        $activeSavings.text('Optimizing...');
+        $activeSavings.text('Compressing...');
 
         $.ajax({
             url: config.ajaxUrl,
@@ -282,18 +326,22 @@
             },
             success: function (res) {
                 if (res.success) {
-                    appendLog('Optimization status records reset. All images set to pending.', 'warn');
+                    appendLog('Optimization status records reset. All images marked pending.', 'warn');
                     updateTelemetry(res.data.stats);
                     state.currentIndex = 0;
                     state.total = 0;
                     updateProgressUI();
                     $progressStatus.text(config.i18n.ready);
+                    if ($scanHeadline.length) {
+                        $scanHeadline.html('All records reset. Click <strong>Scan Library</strong> or <strong>Start Optimizing</strong> to re-process.');
+                    }
                 }
             }
         });
     }
 
     // Attach listeners
+    $btnScan.on('click', scanLibrary);
     $btnStart.on('click', startBulkProcess);
     $btnPause.on('click', pauseBulkProcess);
     $btnResume.on('click', resumeBulkProcess);

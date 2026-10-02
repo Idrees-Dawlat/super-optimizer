@@ -15,17 +15,20 @@ $bulk_url = admin_url('upload.php?page=super-optimizer-bulk');
 ?>
 
 <div class="wrap so-page-wrap">
-    <div class="so-header-strip">
-        <div class="so-header-brand">
-            <span class="so-brand-name"><?php esc_html_e('Super Optimizer Settings', 'super-optimizer'); ?></span>
-            <span class="so-engine-badge"><?php echo esc_html($diagnostics['active_engine_name']); ?></span>
+    <header class="so-header-clean">
+        <div class="so-header-left">
+            <h1 class="so-plugin-title"><?php esc_html_e('Super Optimizer Settings', 'super-optimizer'); ?></h1>
+            <div class="so-engine-pill">
+                <span class="so-engine-dot"></span>
+                <span><?php echo esc_html($diagnostics['active_engine_name']); ?></span>
+            </div>
         </div>
-        <div class="so-header-actions">
+        <div class="so-header-right">
             <a href="<?php echo esc_url($bulk_url); ?>" class="button button-primary">
-                <?php esc_html_e('Bulk Optimize', 'super-optimizer'); ?>
+                <?php esc_html_e('Open Optimizer Console', 'super-optimizer'); ?>
             </a>
         </div>
-    </div>
+    </header>
 
     <?php if (!empty($is_updated)) : ?>
         <div class="notice notice-success is-dismissible">
