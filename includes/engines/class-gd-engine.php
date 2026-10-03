@@ -89,7 +89,8 @@ class GDEngine implements EngineInterface
 
         switch ($info[2]) {
             case IMAGETYPE_JPEG:
-                return @imagecreatefromjpeg($path);
+                $img = @imagecreatefromjpeg($path);
+                return $img ? $this->apply_exif_orientation($img, $path) : false;
             case IMAGETYPE_PNG:
                 $img = @imagecreatefrompng($path);
                 if ($img) {
@@ -104,6 +105,35 @@ class GDEngine implements EngineInterface
             default:
                 return false;
         }
+    }
+
+    /**
+     * GD discards EXIF data on save, so rotate pixels to match the orientation tag first.
+     *
+     * @param \GdImage|resource $image
+     * @return \GdImage|resource
+     */
+    protected function apply_exif_orientation($image, string $path)
+    {
+        if (!function_exists('exif_read_data') || !function_exists('imagerotate')) {
+            return $image;
+        }
+
+        $exif = @exif_read_data($path);
+        $orientation = (int) ($exif['Orientation'] ?? 1);
+        $angles = [3 => 180, 6 => -90, 8 => 90];
+
+        if (!isset($angles[$orientation])) {
+            return $image;
+        }
+
+        $rotated = @imagerotate($image, $angles[$orientation], 0);
+        if ($rotated) {
+            imagedestroy($image);
+            return $rotated;
+        }
+
+        return $image;
     }
 
     /**
@@ -131,9 +161,8 @@ class GDEngine implements EngineInterface
         if ($mime === 'image/jpeg' || $mime === 'image/jpg') {
             $result = imagejpeg($image, $target_path, $quality);
         } elseif ($mime === 'image/png') {
-            // PNG quality in GD is 0 (uncompressed) to 9 (max compression)
-            // Convert 0-100 quality scale to 0-9 scale inverse
-            $png_quality = (int) max(0, min(9, round(9 - ($quality / 11))));
+            // PNG is always lossless; level 9 is the smallest lossless output
+            $png_quality = 9;
             imagealphablending($image, false);
             imagesavealpha($image, true);
             $result = imagepng($image, $target_path, $png_quality);
@@ -217,21 +246,23 @@ class GDEngine implements EngineInterface
             return false;
         }
 
-        $width  = $info[0];
-        $height = $info[1];
+        $source = $this->load_image($source_path);
+        if (!$source) {
+            return false;
+        }
+
+        // Use the real (orientation-corrected) pixel size
+        $width  = imagesx($source);
+        $height = imagesy($source);
 
         if ($width <= $max_width && $height <= $max_height) {
+            imagedestroy($source);
             return true; // Dimensions within bounds
         }
 
         $ratio = min($max_width / $width, $max_height / $height);
         $new_width  = (int) max(1, round($width * $ratio));
         $new_height = (int) max(1, round($height * $ratio));
-
-        $source = $this->load_image($source_path);
-        if (!$source) {
-            return false;
-        }
 
         $destination = imagecreatetruecolor($new_width, $new_height);
         if (!$destination) {
@@ -261,7 +292,7 @@ class GDEngine implements EngineInterface
         if ($info[2] === IMAGETYPE_JPEG) {
             $result = imagejpeg($destination, $target_path, $quality);
         } elseif ($info[2] === IMAGETYPE_PNG) {
-            $png_quality = (int) max(0, min(9, round(9 - ($quality / 11))));
+            $png_quality = 9;
             $result = imagepng($destination, $target_path, $png_quality);
         } elseif ($info[2] === IMAGETYPE_WEBP && $this->supports_webp()) {
             $result = imagewebp($destination, $target_path, $quality);

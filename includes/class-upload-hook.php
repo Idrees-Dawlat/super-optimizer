@@ -47,12 +47,14 @@ class UploadHook
             return $metadata;
         }
 
-        // Execute optimization pipeline
-        Optimizer::optimize_attachment((int) $attachment_id);
+        // Execute optimization pipeline with the metadata WordPress is about to save
+        $result = Optimizer::optimize_attachment((int) $attachment_id, false, is_array($metadata) ? $metadata : []);
 
-        // Fetch refreshed metadata in case dimensions were scaled down
-        $updated_metadata = wp_get_attachment_metadata($attachment_id);
-        return $updated_metadata ?: $metadata;
+        if (!empty($result['success']) && is_array($result['metadata'] ?? null)) {
+            return $result['metadata'];
+        }
+
+        return $metadata;
     }
 
     /**

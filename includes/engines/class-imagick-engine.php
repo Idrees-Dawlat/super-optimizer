@@ -86,6 +86,31 @@ class ImagickEngine implements EngineInterface
     }
 
     /**
+     * Rotates the pixels according to the EXIF orientation tag and resets the tag.
+     */
+    protected function apply_orientation(\Imagick $image): void
+    {
+        try {
+            switch ($image->getImageOrientation()) {
+                case \Imagick::ORIENTATION_BOTTOMRIGHT:
+                    $image->rotateImage('#000', 180);
+                    break;
+                case \Imagick::ORIENTATION_RIGHTTOP:
+                    $image->rotateImage('#000', 90);
+                    break;
+                case \Imagick::ORIENTATION_LEFTBOTTOM:
+                    $image->rotateImage('#000', -90);
+                    break;
+                default:
+                    return;
+            }
+            $image->setImageOrientation(\Imagick::ORIENTATION_TOPLEFT);
+        } catch (\Throwable $e) {
+            // Leave the image as is
+        }
+    }
+
+    /**
      * Compresses image using high-grade lossy / lossless techniques.
      */
     public function optimize(
@@ -102,9 +127,16 @@ class ImagickEngine implements EngineInterface
         try {
             $image = new \Imagick($source_path);
 
-            // Handle multi-frame/animated images safely by selecting first frame
+            // Never touch animated images: re-encoding would drop their frames
             if ($image->getNumberImages() > 1) {
-                $image = $image->coalesceImages();
+                $image->clear();
+                $image->destroy();
+                return false;
+            }
+
+            // Bake in EXIF orientation so photos stay upright once metadata is stripped
+            if ($strip_metadata) {
+                $this->apply_orientation($image);
             }
 
             // Stripping bloated metadata while preserving essential ICC profiles
@@ -125,8 +157,10 @@ class ImagickEngine implements EngineInterface
             if ($format === 'JPEG' || $format === 'JPG') {
                 $image->setImageCompression(\Imagick::COMPRESSION_JPEG);
                 $image->setImageCompressionQuality($quality);
-                // 4:2:0 chroma subsampling: cuts JPEG payload by 30-50% with zero noticeable visual loss
-                $image->setSamplingFactors(['2x2', '1x1', '1x1']);
+                // 4:2:0 chroma subsampling below the Safe level; Safe keeps full colour detail
+                if ($quality < 90) {
+                    $image->setSamplingFactors(['2x2', '1x1', '1x1']);
+                }
                 
                 // Interlace scheme: progressive for images > 15KB, baseline for small icons/thumbnails
                 if ($image->getImageLength() > 15360) {
@@ -166,6 +200,12 @@ class ImagickEngine implements EngineInterface
 
         try {
             $image = new \Imagick($source_path);
+            if ($image->getNumberImages() > 1) {
+                $image->clear();
+                $image->destroy();
+                return false;
+            }
+            $this->apply_orientation($image);
             $image->setImageFormat('webp');
             $image->setImageCompressionQuality($quality);
             $image->setOption('webp:method', '6');

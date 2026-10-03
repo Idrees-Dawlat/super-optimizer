@@ -19,6 +19,18 @@ class Settings
     public const OPTION_NAME = 'super_optimizer_settings';
 
     /**
+     * Compression presets. Every preset keeps quality high enough to avoid visible
+     * artifacts; PNG compression is always lossless.
+     *
+     * @var array
+     */
+    public const COMPRESSION_LEVELS = [
+        'safe'     => ['quality_jpeg' => 90, 'quality_png' => 90, 'quality_webp' => 88],
+        'balanced' => ['quality_jpeg' => 85, 'quality_png' => 85, 'quality_webp' => 82],
+        'smaller'  => ['quality_jpeg' => 80, 'quality_png' => 80, 'quality_webp' => 76],
+    ];
+
+    /**
      * Default configuration options.
      *
      * @var array
@@ -26,9 +38,11 @@ class Settings
     protected static array $defaults = [
         // Metadata & Dimensions
         'remove_metadata'        => 1,
-        'max_width'              => 1920,
-        'max_height'             => 1920,
+        'max_width'              => 2560,
+        'max_height'             => 2560,
         'auto_resize'            => 1,
+        'compression_level'      => 'balanced',
+        'optimize_on_upload'     => 1,
 
         // Quality Sliders
         'quality_jpeg'           => 82,
@@ -65,7 +79,15 @@ class Settings
             $saved = [];
         }
 
-        return wp_parse_args($saved, self::$defaults);
+        $settings = wp_parse_args($saved, self::$defaults);
+
+        $level = (string) $settings['compression_level'];
+        if (!isset(self::COMPRESSION_LEVELS[$level])) {
+            $level = 'balanced';
+        }
+        $settings['compression_level'] = $level;
+
+        return array_merge($settings, self::COMPRESSION_LEVELS[$level]);
     }
 
     /**
@@ -97,14 +119,35 @@ class Settings
 
         // Metadata & Sizing
         $sanitized['remove_metadata'] = !empty($input['remove_metadata']) ? 1 : 0;
-        $sanitized['auto_resize']     = !empty($input['auto_resize']) || !empty($input['max_width']) ? 1 : 0;
-        $sanitized['max_width']       = max(400, min(8000, (int) ($input['max_width'] ?? 1920)));
-        $sanitized['max_height']      = max(400, min(8000, (int) ($input['max_height'] ?? 1920)));
+        $sanitized['optimize_on_upload'] = !empty($input['optimize_on_upload']) ? 1 : 0;
+        $sanitized['auto_resize']     = !empty($input['auto_resize']) ? 1 : 0;
+        $sanitized['max_width']       = max(800, min(8000, (int) ($input['max_width'] ?? 2560)));
+        $sanitized['max_height']      = max(800, min(8000, (int) ($input['max_height'] ?? 2560)));
 
-        // Quality
-        $sanitized['quality_jpeg'] = max(30, min(100, (int) ($input['quality_jpeg'] ?? 82)));
-        $sanitized['quality_png']  = max(30, min(100, (int) ($input['quality_png'] ?? 82)));
-        $sanitized['quality_webp'] = max(30, min(100, (int) ($input['quality_webp'] ?? 80)));
+        // Quality: presets with safe floor, or clamped custom values
+        $level = (string) ($input['compression_level'] ?? 'balanced');
+        if (!isset(self::COMPRESSION_LEVELS[$level])) {
+            $level = 'balanced';
+        }
+        $sanitized['compression_level'] = $level;
+
+        if (isset($input['quality_jpeg'])) {
+            $sanitized['quality_jpeg'] = max(30, min(100, (int) $input['quality_jpeg']));
+        } else {
+            $sanitized['quality_jpeg'] = self::COMPRESSION_LEVELS[$level]['quality_jpeg'];
+        }
+
+        if (isset($input['quality_png'])) {
+            $sanitized['quality_png'] = max(30, min(100, (int) $input['quality_png']));
+        } else {
+            $sanitized['quality_png'] = self::COMPRESSION_LEVELS[$level]['quality_png'];
+        }
+
+        if (isset($input['quality_webp'])) {
+            $sanitized['quality_webp'] = max(30, min(100, (int) $input['quality_webp']));
+        } else {
+            $sanitized['quality_webp'] = self::COMPRESSION_LEVELS[$level]['quality_webp'];
+        }
 
         $engines = ['auto', 'imagick', 'gd'];
         $sanitized['selected_engine'] = in_array($input['selected_engine'] ?? '', $engines, true)

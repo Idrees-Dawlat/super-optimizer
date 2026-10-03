@@ -133,7 +133,6 @@ class BulkRunner
             'bytes_saved'       => $result['bytes_saved'],
             'compression_ratio' => $result['compression_ratio'],
             'webp_count'        => $result['generated_webp_count'],
-            'avif_count'        => $result['generated_avif_count'],
             'stats'             => $stats,
         ]);
     }

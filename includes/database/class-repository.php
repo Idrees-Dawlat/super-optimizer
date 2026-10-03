@@ -220,7 +220,7 @@ class Repository
                 LEFT JOIN {$table_items} i ON p.ID = i.attachment_id
                 WHERE p.post_type = 'attachment'
                   AND p.post_mime_type IN ('image/jpeg', 'image/jpg', 'image/png', 'image/webp')
-                  AND (i.id IS NULL OR i.status IN ('pending', 'failed'))
+                  AND (i.id IS NULL OR i.status IN ('pending', 'processing'))
                 ORDER BY p.ID DESC
                 LIMIT %d OFFSET %d
             ";
@@ -259,7 +259,7 @@ class Repository
             LEFT JOIN {$table_items} i ON p.ID = i.attachment_id
             WHERE p.post_type = 'attachment'
               AND p.post_mime_type IN ('image/jpeg', 'image/jpg', 'image/png', 'image/webp')
-              AND (i.id IS NULL OR i.status IN ('pending', 'failed'))
+              AND (i.id IS NULL OR i.status IN ('pending', 'processing'))
         ";
 
         return (int) $wpdb->get_var($sql);
@@ -353,20 +353,6 @@ class Repository
             $percentage = round(($saved_bytes / $original_bytes) * 100, 1);
         }
 
-        // Calculate estimated bandwidth & page load time saved
-        // Standard baseline: average 4G / mobile throughput (1.5 MB/sec ~ 12 Mbps)
-        $time_saved_ms = 0;
-        $time_saved_formatted = '0 ms';
-        if ($saved_bytes > 0) {
-            $seconds = ($saved_bytes / 1572864); // 1.5 MB/s
-            $time_saved_ms = (int) round($seconds * 1000);
-            if ($seconds < 1.0) {
-                $time_saved_formatted = $time_saved_ms . ' ms';
-            } else {
-                $time_saved_formatted = round($seconds, 1) . ' s';
-            }
-        }
-
         $pending_count = self::count_unoptimized_attachments();
 
         return [
@@ -378,8 +364,6 @@ class Repository
             'total_optimized_bytes' => (int) $stats['total_optimized_bytes'],
             'total_bytes_saved'     => $saved_bytes,
             'percentage_saved'      => $percentage,
-            'time_saved_ms'         => $time_saved_ms,
-            'time_saved_formatted'  => $time_saved_formatted,
             'webp_count'            => (int) $stats['webp_count'],
             'avif_count'            => (int) $stats['avif_count'],
         ];

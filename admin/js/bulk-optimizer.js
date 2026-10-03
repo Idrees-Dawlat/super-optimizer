@@ -1,7 +1,8 @@
 /**
- * Super Optimizer - Bulk Queue & Library Scanner Controller
+ * Super Optimizer - Interactive Admin Controller
  *
- * Provides real-time library scanning and batch optimization.
+ * Lightweight, resilient controller for bulk optimization, scanning,
+ * and settings interactions.
  *
  * @package SuperOptimizer\Admin
  */
@@ -14,6 +15,7 @@
     }
 
     const config = superOptimizerData;
+    const PAGE_SIZE = 500;
 
     const state = {
         queue: [],
@@ -21,64 +23,60 @@
         currentIndex: 0,
         isRunning: false,
         isPaused: false,
-        errorCount: 0
+        errorCount: 0,
+        savedThisRun: 0
     };
 
-    // DOM Controls
-    const $btnScan           = $('#btn-scan-library');
-    const $btnScanText       = $('#btn-scan-text');
-    const $btnStart          = $('#btn-start-bulk');
-    const $btnPause          = $('#btn-pause-bulk');
-    const $btnResume         = $('#btn-resume-bulk');
-    const $btnReset          = $('#btn-reset-index');
-    const $btnClearLog       = $('#btn-clear-console');
+    // DOM Elements - Optimize Deck
+    const $btnScan        = $('#btn-scan-library');
+    const $btnScanText    = $('#btn-scan-text');
+    const $btnStart       = $('#btn-start-bulk');
+    const $btnPause       = $('#btn-pause-bulk');
+    const $btnResume      = $('#btn-resume-bulk');
+    const $spinnerBox     = $('#so-scan-spinner');
+    const $deckIdle       = $('#so-deck-idle');
+    const $deckRunning    = $('#so-deck-running');
+    const $badge          = $('#so-state-badge');
+    const $reoptTip       = $('#so-reopt-tip');
 
-    // Progress elements
-    const $progressBar       = $('#bulk-progress-bar');
-    const $progressPct       = $('#bulk-progress-pct');
-    const $progressStatus    = $('#bulk-progress-status');
-    const $progressCounts    = $('#bulk-progress-counts');
-    const $activeItemBox     = $('#so-active-item');
-    const $activeFilename    = $('#so-current-filename');
-    const $activeSavings     = $('#so-current-savings');
-    const $consoleStream     = $('#so-console-stream');
+    // DOM Elements - Progress & Ticker
+    const $progressBar    = $('#bulk-progress-bar');
+    const $progressTrack  = $('#bulk-progress-track');
+    const $progressPct    = $('#bulk-progress-pct');
+    const $progressStatus = $('#bulk-progress-status');
+    const $progressCounts = $('#bulk-progress-counts');
+    const $activeFilename = $('#so-current-filename');
+    const $activeSavings  = $('#so-current-savings');
+    const $scanHeadline   = $('#so-scan-headline');
+    const $scanSubline    = $('#so-scan-subline');
 
-    // Headline elements
-    const $scanHeadline      = $('#so-scan-headline');
-    const $scanSubline       = $('#so-scan-subline');
-
-    // Options
-    const $chkForceReopt     = $('#bulk_force_reoptimize');
-    const $chkWebpOnly       = $('#bulk_webp_only');
-    const $selectPause       = $('#bulk_pause_seconds');
-
-    // Telemetry displays
-    const $statTimeSaved      = $('#stat-time-saved');
+    // DOM Elements - Telemetry Cards
     const $statBytesSaved     = $('#stat-bytes-saved');
     const $statPercentage     = $('#stat-percentage');
     const $statOptimizedCount = $('#stat-optimized-count');
+    const $statTotalCount     = $('#stat-total-count');
     const $statNextgenCount   = $('#stat-nextgen-count');
 
+    // DOM Elements - Settings Page
+    const $btnReset           = $('#btn-reset-index');
+    const $tierCards          = $('.so-tier-card');
+
+    function formatNumber(n) {
+        return Number(n || 0).toLocaleString();
+    }
+
     function formatBytes(bytes) {
-        if (bytes <= 0) return '0 B';
-        const units = ['B', 'KB', 'MB', 'GB'];
-        const base = Math.floor(Math.log(bytes) / Math.log(1024));
-        const val = (bytes / Math.pow(1024, base)).toFixed(1);
-        return val + ' ' + (units[base] || 'B');
+        if (!bytes || bytes <= 0) return '0 B';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const base = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+        return (bytes / Math.pow(1024, base)).toFixed(base === 0 ? 0 : 1) + ' ' + units[base];
     }
 
-    function getTimeStamp() {
-        const d = new Date();
-        return d.toTimeString().split(' ')[0];
-    }
-
-    function appendLog(message, type) {
-        type = type || 'info';
-        const $line = $('<div class="so-feed-row so-' + type + '"></div>');
-        $line.append('<span class="so-feed-ts">' + getTimeStamp() + '</span>');
-        $line.append('<span class="so-feed-msg">' + message + '</span>');
-        $consoleStream.append($line);
-        $consoleStream.scrollTop($consoleStream[0].scrollHeight);
+    function setBadge(kind, label) {
+        if (!$badge.length) return;
+        $badge.removeClass('is-ready is-running is-paused is-done is-error');
+        $badge.addClass('is-' + kind);
+        $badge.text(label);
     }
 
     function updateProgressUI() {
@@ -87,16 +85,14 @@
         const pct = total > 0 ? Math.round((processed / total) * 100) : 0;
 
         $progressBar.css('width', pct + '%');
+        $progressTrack.attr('aria-valuenow', pct);
         $progressPct.text(pct + '%');
-        $progressCounts.text(processed + ' / ' + total + ' processed');
+        $progressCounts.text(formatNumber(processed) + ' / ' + formatNumber(total));
     }
 
     function updateTelemetry(stats) {
         if (!stats) return;
 
-        if ($statTimeSaved.length && stats.time_saved_formatted) {
-            $statTimeSaved.text(stats.time_saved_formatted);
-        }
         if ($statBytesSaved.length) {
             $statBytesSaved.text(formatBytes(stats.total_bytes_saved));
         }
@@ -104,22 +100,28 @@
             $statPercentage.text('-' + stats.percentage_saved + '%');
         }
         if ($statOptimizedCount.length) {
-            $statOptimizedCount.text(stats.optimized_attachments);
+            $statOptimizedCount.text(formatNumber(stats.optimized_attachments));
+        }
+        if ($statTotalCount.length && stats.total_library_images !== undefined) {
+            $statTotalCount.text(formatNumber(stats.total_library_images));
         }
         if ($statNextgenCount.length) {
-            $statNextgenCount.text(stats.webp_count);
+            $statNextgenCount.text(formatNumber(stats.webp_count));
         }
     }
 
     /**
-     * Scans Media Library on demand and updates UI summary.
+     * Checks/scans the media library with animated spinner.
      */
     function scanLibrary() {
-        const forceReopt = $chkForceReopt.is(':checked') ? 1 : 0;
+        const forceReopt = (config.options && config.options.force) ? 1 : 0;
 
         $btnScan.prop('disabled', true);
-        $btnScanText.text('Scanning...');
-        appendLog('Scanning Media Library for images (Force Re-optimize: ' + (forceReopt ? 'Yes' : 'No') + ')...', 'info');
+        if ($deckIdle.length) $deckIdle.hide();
+        if ($deckRunning.length) $deckRunning.hide();
+        if ($spinnerBox.length) $spinnerBox.show();
+
+        setBadge('ready', 'Scanning…');
 
         $.ajax({
             url: config.ajaxUrl,
@@ -129,93 +131,133 @@
                 action: 'super_optimizer_bulk_scan',
                 nonce: config.nonce,
                 force_reoptimize: forceReopt
-            },
-            success: function (res) {
-                $btnScan.prop('disabled', false);
-                $btnScanText.text('Scan Library');
-
-                if (!res.success || !res.data) {
-                    appendLog('Library scan failed.', 'error');
-                    return;
-                }
-
-                const data = res.data;
-                appendLog(data.message, 'success');
-
-                if ($scanHeadline.length) {
-                    if (data.active_queue_count > 0) {
-                        $scanHeadline.html('Found <strong>' + data.active_queue_count + '</strong> image attachments ready for optimization.');
-                    } else {
-                        $scanHeadline.html('All <strong>' + data.total_library + '</strong> media library images are currently optimized with WebP siblings.');
-                    }
-                }
-
-                $progressCounts.text('0 / ' + data.active_queue_count + ' processed');
-                $progressStatus.text('Scan complete: ' + data.active_queue_count + ' ready.');
-                updateTelemetry(data.stats);
-            },
-            error: function () {
-                $btnScan.prop('disabled', false);
-                $btnScanText.text('Scan Library');
-                appendLog('Server error connecting to scanner endpoint.', 'error');
             }
+        }).done(function (res) {
+            if ($spinnerBox.length) $spinnerBox.hide();
+            if ($deckIdle.length) $deckIdle.show();
+
+            if (!res || !res.success || !res.data) {
+                if ($scanHeadline.length) {
+                    $scanHeadline.text('Unable to check media library.');
+                }
+                if ($scanSubline.length) {
+                    $scanSubline.text('The server did not respond as expected. Please try again.');
+                }
+                setBadge('error', 'Error');
+                return;
+            }
+
+            const data = res.data;
+            const count = data.active_queue_count || 0;
+            const total = data.total_library || 0;
+
+            if (count > 0) {
+                if ($scanHeadline.length) {
+                    $scanHeadline.html('Found <strong>' + formatNumber(count) + '</strong> ' +
+                        (count === 1 ? 'image' : 'images') + ' ready to optimize');
+                }
+                if ($scanSubline.length) {
+                    $scanSubline.text('Click Start Optimizing to compress these images and create WebP versions. You can pause anytime.');
+                }
+                if ($btnStart.length) $btnStart.show();
+                if ($btnScanText.length) $btnScanText.text('Check Library Again');
+                if ($reoptTip.length) $reoptTip.hide();
+                setBadge('ready', 'Ready');
+            } else {
+                if ($scanHeadline.length) {
+                    $scanHeadline.html('All <strong>' + formatNumber(total) + '</strong> images in your library are currently optimized!');
+                }
+                if ($scanSubline.length) {
+                    $scanSubline.text('There are no unoptimized images pending. New uploads are optimized automatically.');
+                }
+                if ($btnStart.length) $btnStart.hide();
+                if ($btnScanText.length) $btnScanText.text('Check Library Again');
+                if ($reoptTip.length) $reoptTip.show();
+                setBadge('done', 'All Optimized');
+            }
+
+            updateTelemetry(data.stats);
+        }).fail(function () {
+            if ($spinnerBox.length) $spinnerBox.hide();
+            if ($deckIdle.length) $deckIdle.show();
+            if ($scanHeadline.length) {
+                $scanHeadline.text('Connection error.');
+            }
+            if ($scanSubline.length) {
+                $scanSubline.text('Could not reach the server endpoint. Please verify your connection.');
+            }
+            setBadge('error', 'Error');
+        }).always(function () {
+            $btnScan.prop('disabled', false);
         });
     }
 
     /**
-     * Starts bulk processing batch queue.
+     * Loads queue across multiple pages if library exceeds PAGE_SIZE.
      */
-    function startBulkProcess() {
-        const forceReopt = $chkForceReopt.is(':checked') ? 1 : 0;
-        const webpOnly   = $chkWebpOnly.is(':checked') ? 1 : 0;
-
-        state.isRunning = true;
-        state.isPaused = false;
-        state.currentIndex = 0;
-        state.errorCount = 0;
-
-        $btnStart.hide();
-        $btnPause.show();
-        $btnResume.hide();
-        $progressStatus.text(config.i18n.optimizing);
-        appendLog('Initializing optimization batch (WebP Only: ' + (webpOnly ? 'Yes' : 'No') + ')...', 'info');
-
-        $.ajax({
+    function loadQueue(forceReopt, offset, acc) {
+        return $.ajax({
             url: config.ajaxUrl,
             type: 'POST',
             dataType: 'json',
             data: {
                 action: 'super_optimizer_bulk_get_queue',
                 nonce: config.nonce,
-                force_reoptimize: forceReopt
-            },
-            success: function (res) {
-                if (!res.success || !res.data) {
-                    appendLog('Failed to query Media Library queue.', 'error');
-                    finishProcess(false);
-                    return;
-                }
-
-                state.queue = res.data.ids || [];
-                state.total = state.queue.length;
-
-                if (state.total === 0) {
-                    appendLog('All media images are already optimized.', 'success');
-                    $progressStatus.text(config.i18n.completed);
-                    updateProgressUI();
-                    finishProcess(true);
-                    return;
-                }
-
-                appendLog('Starting queue: ' + state.total + ' images to process.', 'info');
-                updateProgressUI();
-                $activeItemBox.show();
-                processNextItem();
-            },
-            error: function () {
-                appendLog('Server communication failure while loading queue.', 'error');
-                finishProcess(false);
+                force_reoptimize: forceReopt,
+                limit: PAGE_SIZE,
+                offset: offset
             }
+        }).then(function (res) {
+            if (!res || !res.success || !res.data) {
+                return $.Deferred().reject().promise();
+            }
+            const ids = res.data.ids || [];
+            acc = acc.concat(ids);
+            if (ids.length >= PAGE_SIZE) {
+                return loadQueue(forceReopt, offset + PAGE_SIZE, acc);
+            }
+            return acc;
+        });
+    }
+
+    /**
+     * Starts bulk optimization batch.
+     */
+    function startBulkProcess() {
+        const forceReopt = (config.options && config.options.force) ? 1 : 0;
+        const webpOnly   = (config.options && config.options.webpOnly) ? 1 : 0;
+
+        state.isRunning = true;
+        state.isPaused = false;
+        state.currentIndex = 0;
+        state.errorCount = 0;
+        state.savedThisRun = 0;
+
+        if ($deckIdle.length) $deckIdle.hide();
+        if ($deckRunning.length) $deckRunning.show();
+
+        $btnPause.show().prop('disabled', true);
+        $btnResume.hide();
+        $progressStatus.text('Preparing queue…');
+        setBadge('running', 'Optimizing');
+
+        loadQueue(forceReopt, 0, []).done(function (ids) {
+            state.queue = ids;
+            state.total = ids.length;
+            $btnPause.prop('disabled', false);
+
+            if (state.total === 0) {
+                completeRun();
+                return;
+            }
+
+            $progressStatus.text('Optimizing media library…');
+            updateProgressUI();
+            processNextItem();
+        }).fail(function () {
+            $progressStatus.text('Failed to query library queue.');
+            setBadge('error', 'Error');
+            finishProcess();
         });
     }
 
@@ -223,28 +265,25 @@
         if (!state.isRunning) return;
 
         if (state.isPaused) {
-            $progressStatus.text(config.i18n.paused);
+            $progressStatus.text('Optimization paused.');
             $btnPause.hide();
             $btnResume.show();
-            appendLog('Optimization paused.', 'warn');
+            setBadge('paused', 'Paused');
             return;
         }
 
         if (state.currentIndex >= state.queue.length) {
-            appendLog('Optimization complete: all images processed successfully.', 'success');
-            $progressStatus.text(config.i18n.completed);
-            $activeItemBox.hide();
-            finishProcess(true);
+            completeRun();
             return;
         }
 
         const attachmentId = state.queue[state.currentIndex];
-        const webpOnly = $chkWebpOnly.is(':checked') ? 1 : 0;
-        const pauseSeconds = parseInt($selectPause.val() || '0', 10);
-        const pauseMs = Math.max(50, pauseSeconds * 1000);
+        const webpOnly = (config.options && config.options.webpOnly) ? 1 : 0;
+        const delaySeconds = (config.options && config.options.delay) ? config.options.delay : 0;
+        const pauseMs = Math.max(50, delaySeconds * 1000);
 
         $activeFilename.text('#' + attachmentId);
-        $activeSavings.text('Compressing...');
+        $activeSavings.text('Compressing…');
 
         $.ajax({
             url: config.ajaxUrl,
@@ -255,99 +294,141 @@
                 nonce: config.nonce,
                 attachment_id: attachmentId,
                 webp_only: webpOnly
-            },
-            success: function (res) {
-                if (res.success && res.data) {
-                    const data = res.data;
-                    const savedFormatted = formatBytes(data.bytes_saved);
-                    $activeFilename.text(data.filename);
-                    $activeSavings.text('-' + data.compression_ratio + '% (' + savedFormatted + ')');
+            }
+        }).done(function (res) {
+            if (res && res.success && res.data) {
+                const data = res.data;
+                const savedFormatted = formatBytes(data.bytes_saved);
+                state.savedThisRun += data.bytes_saved || 0;
 
-                    const feedText = '(' + (state.currentIndex + 1) + '/' + state.total + ') ' +
-                        data.filename + ' -> Saved ' + savedFormatted + ' (-' + data.compression_ratio + '%)' +
-                        (data.webp_count > 0 ? ' [WebP created]' : '');
-                    appendLog(feedText, 'success');
-
-                    updateTelemetry(data.stats);
+                $activeFilename.text(data.filename);
+                if (data.bytes_saved > 0) {
+                    $activeSavings.text('Saved ' + savedFormatted + ' (-' + data.compression_ratio + '%)');
                 } else {
-                    state.errorCount++;
-                    const errMsg = res.data ? res.data.message : 'Error processing image';
-                    appendLog('Skipped #' + attachmentId + ': ' + errMsg, 'warn');
+                    $activeSavings.text('Already optimal' + (data.webp_count > 0 ? ' (WebP created)' : ''));
                 }
 
-                state.currentIndex++;
-                updateProgressUI();
-
-                setTimeout(processNextItem, pauseMs);
-            },
-            error: function () {
+                updateTelemetry(data.stats);
+            } else {
                 state.errorCount++;
-                appendLog('Network timeout on #' + attachmentId + '. Moving forward...', 'error');
-                state.currentIndex++;
-                updateProgressUI();
-                setTimeout(processNextItem, Math.max(200, pauseMs));
+                const errMsg = res && res.data && res.data.message ? res.data.message : 'Skipped';
+                $activeFilename.text('#' + attachmentId);
+                $activeSavings.text(errMsg);
             }
+        }).fail(function () {
+            state.errorCount++;
+            $activeFilename.text('#' + attachmentId);
+            $activeSavings.text('Network timeout, continuing…');
+        }).always(function () {
+            state.currentIndex++;
+            updateProgressUI();
+            setTimeout(processNextItem, pauseMs);
         });
+    }
+
+    function completeRun() {
+        state.isRunning = false;
+        state.isPaused = false;
+
+        setBadge('done', 'Complete');
+
+        if ($deckRunning.length) $deckRunning.hide();
+        if ($deckIdle.length) $deckIdle.show();
+
+        const savedFmt = formatBytes(state.savedThisRun);
+        const processedCount = state.total - state.errorCount;
+
+        if ($scanHeadline.length) {
+            $scanHeadline.html('Optimization Complete! Saved <strong>' + savedFmt + '</strong>');
+        }
+        if ($scanSubline.length) {
+            $scanSubline.text('Successfully compressed ' + formatNumber(processedCount) + ' ' +
+                (processedCount === 1 ? 'image' : 'images') +
+                (state.errorCount > 0 ? ' (' + state.errorCount + ' skipped).' : '. All images are up to date!'));
+        }
+
+        if ($btnStart.length) $btnStart.hide();
+        if ($btnScanText.length) $btnScanText.text('Check Library Again');
+        if ($reoptTip.length) $reoptTip.show();
+    }
+
+    function finishProcess() {
+        state.isRunning = false;
+        state.isPaused = false;
+        $btnPause.hide().prop('disabled', false);
+        $btnResume.hide();
+        if ($deckRunning.length) $deckRunning.hide();
+        if ($deckIdle.length) $deckIdle.show();
     }
 
     function pauseBulkProcess() {
         state.isPaused = true;
+        $btnPause.prop('disabled', true);
+        $progressStatus.text('Pausing…');
     }
 
     function resumeBulkProcess() {
         state.isPaused = false;
         $btnResume.hide();
-        $btnPause.show();
-        $progressStatus.text(config.i18n.optimizing);
-        appendLog('Resuming optimization...', 'info');
+        $btnPause.show().prop('disabled', false);
+        setBadge('running', 'Optimizing');
+        $progressStatus.text('Resuming optimization…');
         processNextItem();
     }
 
-    function finishProcess(allDone) {
-        state.isRunning = false;
-        state.isPaused = false;
-        $btnPause.hide();
-        $btnResume.hide();
-        $btnStart.show();
-    }
-
+    /**
+     * Resets optimization database records from Settings page.
+     */
     function resetIndex() {
-        if (!window.confirm(config.i18n.confirmReset)) {
+        const confirmMsg = config.i18n && config.i18n.confirmReset
+            ? config.i18n.confirmReset
+            : 'Reset all optimization records?';
+
+        if (!window.confirm(confirmMsg)) {
             return;
         }
+
+        $btnReset.prop('disabled', true).text('Resetting…');
 
         $.ajax({
             url: config.ajaxUrl,
             type: 'POST',
             dataType: 'json',
-            data: {
-                action: 'super_optimizer_bulk_reset',
-                nonce: config.nonce
-            },
-            success: function (res) {
-                if (res.success) {
-                    appendLog('Optimization status records reset. All images marked pending.', 'warn');
-                    updateTelemetry(res.data.stats);
-                    state.currentIndex = 0;
-                    state.total = 0;
-                    updateProgressUI();
-                    $progressStatus.text(config.i18n.ready);
-                    if ($scanHeadline.length) {
-                        $scanHeadline.html('All records reset. Click <strong>Scan Library</strong> or <strong>Start Optimizing</strong> to re-process.');
-                    }
-                }
+            data: { action: 'super_optimizer_bulk_reset', nonce: config.nonce }
+        }).done(function (res) {
+            if (res && res.success) {
+                alert('Optimization database index has been reset. All images are now marked as pending.');
+                window.location.reload();
+            } else {
+                alert('Reset failed. Please try again.');
+                $btnReset.prop('disabled', false).text('Reset Records');
             }
+        }).fail(function () {
+            alert('Server error while resetting database index.');
+            $btnReset.prop('disabled', false).text('Reset Records');
         });
     }
 
-    // Attach listeners
-    $btnScan.on('click', scanLibrary);
-    $btnStart.on('click', startBulkProcess);
-    $btnPause.on('click', pauseBulkProcess);
-    $btnResume.on('click', resumeBulkProcess);
-    $btnReset.on('click', resetIndex);
-    $btnClearLog.on('click', function () {
-        $consoleStream.empty();
+    // Interactive tier card selection on Settings page
+    $tierCards.on('click', function () {
+        $tierCards.removeClass('is-selected');
+        $(this).addClass('is-selected');
+        $(this).find('input[type="radio"]').prop('checked', true);
     });
+
+    // Warn if leaving mid-process
+    window.addEventListener('beforeunload', function (e) {
+        if (state.isRunning && !state.isPaused) {
+            e.preventDefault();
+            e.returnValue = '';
+        }
+    });
+
+    // Event Bindings
+    if ($btnScan.length) $btnScan.on('click', scanLibrary);
+    if ($btnStart.length) $btnStart.on('click', startBulkProcess);
+    if ($btnPause.length) $btnPause.on('click', pauseBulkProcess);
+    if ($btnResume.length) $btnResume.on('click', resumeBulkProcess);
+    if ($btnReset.length) $btnReset.on('click', resetIndex);
 
 })(jQuery);

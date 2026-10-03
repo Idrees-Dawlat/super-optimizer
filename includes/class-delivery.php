@@ -93,16 +93,21 @@ class Delivery
                     return $img_tag;
                 }
 
-                // Check for srcset attribute
+                // Check for srcset attribute (only list WebP files that really exist)
                 $webp_srcset = '';
                 if (preg_match('/srcset=[\'"]([^\'"]+)[\'"]/i', $img_tag, $srcset_matches)) {
                     $sources = explode(',', $srcset_matches[1]);
                     $webp_sources = [];
                     foreach ($sources as $source) {
                         $parts = preg_split('/\s+/', trim($source));
-                        if (!empty($parts[0])) {
-                            $webp_sources[] = $parts[0] . '.webp' . (!empty($parts[1]) ? ' ' . $parts[1] : '');
+                        if (empty($parts[0]) || strpos($parts[0], $base_url) !== 0) {
+                            continue;
                         }
+                        $candidate_path = $base_path . substr($parts[0], strlen($base_url)) . '.webp';
+                        if (!file_exists($candidate_path)) {
+                            continue;
+                        }
+                        $webp_sources[] = $parts[0] . '.webp' . (!empty($parts[1]) ? ' ' . $parts[1] : '');
                     }
                     if (!empty($webp_sources)) {
                         $webp_srcset = implode(', ', $webp_sources);
